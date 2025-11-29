@@ -295,7 +295,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const selection = userCountrySelection.get(interaction.user.id);
     if (!selection) {
       await interaction.reply({
-        content: '⚠️ Could not find your selected country. Please start the registration again.',
+        content:
+          '⚠️ Could not find your selected country. Please start the registration again by clicking **SIGN UP**.',
         ephemeral: true,
       });
       return;
@@ -341,7 +342,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const pending = pendingSellerContact.get(interaction.user.id);
     if (!pending) {
       await interaction.reply({
-        content: '⚠️ I could not find your contact info. Please start the registration again.',
+        content:
+          '⚠️ I could not find your contact info. Please start the registration again by clicking **SIGN UP**.',
         ephemeral: true,
       });
       return;
@@ -398,7 +400,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const pending = pendingSellerContact.get(interaction.user.id);
     if (!pending) {
       await interaction.reply({
-        content: '⚠️ I could not find your contact info. Please start the registration again.',
+        content:
+          '⚠️ I could not find your contact info. Please start the registration again by clicking **SIGN UP**.',
         ephemeral: true,
       });
       return;
