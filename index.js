@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import morgan from 'morgan';
 import fetch from 'node-fetch';
+import Airtable from 'airtable';
 
 import {
   Client,
@@ -19,15 +20,13 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 
-import Airtable from 'airtable';
-
 const {
   DISCORD_TOKEN,
   AIRTABLE_API_KEY,
   AIRTABLE_BASE_ID,
-  AIRTABLE_SELLERS_TABLE = 'Sellers',
+  AIRTABLE_SELLERS_TABLE = 'Sellers Database',
   MAKE_PDF_WEBHOOK_URL,
-  TNC_URL = 'https://kickzcaviar.nl/terms', // change to your T&C URL
+  TNC_URL = 'https://kickzcaviar.nl/terms', // set your real T&C URL
   PORT = 10000,
 } = process.env;
 
@@ -66,38 +65,49 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-/* ---------------- In-memory country selection cache ---------------- */
-// userId -> { name: 'Netherlands', code: 'NL' }
+/* ---------------- In-memory caches ---------------- */
+
+// userId -> { name: 'Netherlands' }
 const userCountrySelection = new Map();
 
-/* ---------------- Helper: country options ---------------- */
+// userId -> { countryName, fullName, companyName, vatId, email }
+const pendingSellerContact = new Map();
+
+/* ---------------- Country dropdown options ---------------- */
 
 const countryOptions = [
-  { label: 'Netherlands', value: 'NL' },
-  { label: 'Belgium', value: 'BE' },
-  { label: 'Germany', value: 'DE' },
-  { label: 'France', value: 'FR' },
-  { label: 'Italy', value: 'IT' },
-  { label: 'Spain', value: 'ES' },
-  { label: 'Portugal', value: 'PT' },
-  { label: 'Poland', value: 'PL' },
-  { label: 'Austria', value: 'AT' },
-  { label: 'Sweden', value: 'SE' },
-  { label: 'Denmark', value: 'DK' },
-  { label: 'United Kingdom', value: 'GB' },
-  // add/remove countries as needed
+  'Austria',
+  'Belgium',
+  'Bulgaria',
+  'Croatia',
+  'Cyprus',
+  'Czech Republic',
+  'Denmark',
+  'Finland',
+  'France',
+  'Germany',
+  'Greece',
+  'Hungary',
+  'Italy',
+  'Latvia',
+  'Luxembourg',
+  'Netherlands',
+  'Poland',
+  'Portugal',
+  'Romania',
+  'Slovakia',
+  'Slovenia',
+  'Spain',
+  'Sweden',
+  'Norway',
+  'Switzerland',
 ];
 
-function getCountryByCode(code) {
-  return countryOptions.find((c) => c.value === code);
-}
-
-/* ---------------- Ready event: register command ---------------- */
+/* ---------------- Ready event: register slash cmd ---------------- */
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`🤖 Logged in as ${c.user.tag}`);
 
-  // Simple inline definition of the /setup-seller-registration command
   const setupCommand = {
     name: 'setup-seller-registration',
     description: 'Post the seller registration embed in this channel.',
@@ -118,7 +128,7 @@ client.once(Events.ClientReady, async (c) => {
 /* ---------------- Interaction handling ---------------- */
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  /* ----- Slash command: post embed ----- */
+  /* ----- Slash command: post main embed ----- */
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'setup-seller-registration') {
       const embed = new EmbedBuilder()
@@ -152,15 +162,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
-  /* ----- SIGN UP button → send ephemeral step with T&C + country + I Agree ----- */
+  /* ----- SIGN UP button → T&C + country + I Agree step ----- */
   if (interaction.isButton() && interaction.customId === 'seller_signup') {
     const countrySelect = new StringSelectMenuBuilder()
       .setCustomId('seller_country_select')
       .setPlaceholder('Select your country')
       .addOptions(
-        countryOptions.map((c) => ({
-          label: c.label,
-          value: c.value,
+        countryOptions.map((name) => ({
+          label: name,
+          value: name, // we only need the name
         })),
       );
 
@@ -188,7 +198,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       content: [
         'Please follow these steps:',
         '1. Open and review our **Terms & Conditions**.',
-        '2. Select your **country** from the dropdown.',
+        '2. Select your **country** from the dropdown below.',
         '3. Click **I Agree & Continue** to start the registration form.',
       ].join('\n'),
       components: [row1, row2, row3],
@@ -198,12 +208,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  /* ----- Country select menu ----- */
+  /* ----- Country dropdown ----- */
   if (interaction.isStringSelectMenu() && interaction.customId === 'seller_country_select') {
-    const selectedCode = interaction.values[0]; // e.g. "NL"
-    const country = getCountryByCode(selectedCode);
+    const selectedName = interaction.values[0]; // e.g. "Netherlands"
 
-    if (!country) {
+    if (!countryOptions.includes(selectedName)) {
       await interaction.reply({
         content: '⚠️ Unknown country selection. Please try again.',
         ephemeral: true,
@@ -211,18 +220,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Save selection in memory cache
     userCountrySelection.set(interaction.user.id, {
-      name: country.label,
-      code: country.value,
+      name: selectedName,
     });
 
-    // No need to change the message; just acknowledge
     await interaction.deferUpdate();
     return;
   }
 
-  /* ----- I Agree & Continue / Cancel buttons ----- */
+  /* ----- Cancel button ----- */
+  if (interaction.isButton() && interaction.customId === 'seller_cancel') {
+    userCountrySelection.delete(interaction.user.id);
+    pendingSellerContact.delete(interaction.user.id);
+
+    await interaction.update({
+      content: '❌ Seller registration cancelled.',
+      components: [],
+    });
+    return;
+  }
+
+  /* ----- I Agree & Continue → Modal 1 (contact info) ----- */
   if (interaction.isButton() && interaction.customId === 'seller_agree') {
     const selection = userCountrySelection.get(interaction.user.id);
     if (!selection) {
@@ -233,10 +251,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Build modal WITHOUT country field (we already have it)
     const modal = new ModalBuilder()
-      .setCustomId('seller_registration_modal')
-      .setTitle('Seller Registration');
+      .setCustomId('seller_contact_modal')
+      .setTitle('Seller Registration – Step 1/2');
 
     const fullName = new TextInputBuilder()
       .setCustomId('full_name')
@@ -261,6 +278,78 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .setLabel('Email')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(fullName),
+      new ActionRowBuilder().addComponents(companyName),
+      new ActionRowBuilder().addComponents(vatId),
+      new ActionRowBuilder().addComponents(email),
+    );
+
+    await interaction.showModal(modal);
+    return;
+  }
+
+  /* ----- Modal 1 submit: store contact info & show continue button ----- */
+  if (interaction.isModalSubmit() && interaction.customId === 'seller_contact_modal') {
+    const selection = userCountrySelection.get(interaction.user.id);
+    if (!selection) {
+      await interaction.reply({
+        content: '⚠️ Could not find your selected country. Please start the registration again.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const countryName = selection.name;
+
+    const fullName = interaction.fields.getTextInputValue('full_name');
+    const companyName = interaction.fields.getTextInputValue('company_name') || '';
+    const vatId = interaction.fields.getTextInputValue('vat_id') || '';
+    const email = interaction.fields.getTextInputValue('email');
+
+    pendingSellerContact.set(interaction.user.id, {
+      countryName,
+      fullName,
+      companyName,
+      vatId,
+      email,
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('seller_address_continue')
+        .setLabel('➡️ Continue to Address (Step 2/2)')
+        .setStyle(ButtonStyle.Primary),
+    );
+
+    await interaction.reply({
+      content: [
+        '✅ Step 1/2 saved: contact info.',
+        '',
+        'Now click **Continue to Address (Step 2/2)** to fill in your address and payout info.',
+      ].join('\n'),
+      components: [row],
+      ephemeral: true,
+    });
+
+    return;
+  }
+
+  /* ----- Continue to Address → Modal 2 ----- */
+  if (interaction.isButton() && interaction.customId === 'seller_address_continue') {
+    const pending = pendingSellerContact.get(interaction.user.id);
+    if (!pending) {
+      await interaction.reply({
+        content: '⚠️ I could not find your contact info. Please start the registration again.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId('seller_address_modal')
+      .setTitle('Seller Registration – Step 2/2');
 
     const address = new TextInputBuilder()
       .setCustomId('address')
@@ -293,10 +382,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .setRequired(true);
 
     modal.addComponents(
-      new ActionRowBuilder().addComponents(fullName),
-      new ActionRowBuilder().addComponents(companyName),
-      new ActionRowBuilder().addComponents(vatId),
-      new ActionRowBuilder().addComponents(email),
       new ActionRowBuilder().addComponents(address),
       new ActionRowBuilder().addComponents(address2),
       new ActionRowBuilder().addComponents(zipcode),
@@ -308,55 +393,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  if (interaction.isButton() && interaction.customId === 'seller_cancel') {
-    // Clear cached country and remove components
-    userCountrySelection.delete(interaction.user.id);
-
-    await interaction.update({
-      content: '❌ Seller registration cancelled.',
-      components: [],
-    });
-    return;
-  }
-
-  /* ----- Modal submit: create Airtable seller + DM Seller ID + call Make ----- */
-  if (interaction.isModalSubmit() && interaction.customId === 'seller_registration_modal') {
-    const selection = userCountrySelection.get(interaction.user.id);
-    if (!selection) {
-      // Should not happen normally, but just in case
+  /* ----- Modal 2 submit: create Airtable record + DM Seller ID ----- */
+  if (interaction.isModalSubmit() && interaction.customId === 'seller_address_modal') {
+    const pending = pendingSellerContact.get(interaction.user.id);
+    if (!pending) {
       await interaction.reply({
-        content: '⚠️ Could not find your selected country. Please start the registration again.',
+        content: '⚠️ I could not find your contact info. Please start the registration again.',
         ephemeral: true,
       });
       return;
     }
 
-    // Remove from cache now that we're processing
+    const { countryName, fullName, companyName, vatId, email } = pending;
+
+    // clear pending data
+    pendingSellerContact.delete(interaction.user.id);
     userCountrySelection.delete(interaction.user.id);
 
-    const countryName = selection.name; // For Airtable "Country"
-    const countryCode = selection.code; // If you want a "Country Code" field
-
-    const fullName = interaction.fields.getTextInputValue('full_name');
-    const companyName = interaction.fields.getTextInputValue('company_name');
-    const vatId = interaction.fields.getTextInputValue('vat_id');
-    const email = interaction.fields.getTextInputValue('email');
     const address = interaction.fields.getTextInputValue('address');
-    const address2 = interaction.fields.getTextInputValue('address2');
+    const address2 = interaction.fields.getTextInputValue('address2') || '';
     const zipcode = interaction.fields.getTextInputValue('zipcode');
     const city = interaction.fields.getTextInputValue('city');
     const payoutInfo = interaction.fields.getTextInputValue('payout_info');
 
+    const fullAddress = address2 ? `${address}, ${address2}` : address;
+
     const discordId = interaction.user.id;
     const discordTag = interaction.user.tag;
 
-    // Combine Address + Address line 2 with comma if line 2 exists
-    const fullAddress = address2 && address2.trim() !== ''
-      ? `${address}, ${address2}`
-      : address;
-
     try {
-      // Check if seller already exists by Discord ID
+      // Check if seller already exists
       const existing = await sellersTable
         .select({
           maxRecords: 1,
@@ -371,7 +437,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           const dm = await interaction.user.createDM();
           await dm.send(
-            `👋 You already have a seller profile with Kickz Caviar.\n\nYour **Seller ID** is: \`${existingSellerId}\`.`
+            `👋 You already have a seller profile with Kickz Caviar.\n\nYour **Seller ID** is: \`${existingSellerId}\`.`,
           );
         } catch (dmErr) {
           console.error('Error sending DM with existing Seller ID:', dmErr);
@@ -385,27 +451,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // Create new seller record mapped exactly to your Sellers Dashboard fields
+      // Create new seller record in "Sellers Database"
       const created = await sellersTable.create({
         'Discord ID': discordId,
         'Discord': discordTag,
         'Full Name': fullName,
-        'Company Name': companyName || '',
-        'VAT ID': vatId || '',
+        'Company Name': companyName,
+        'VAT ID': vatId,
         'Email': email,
         'Address': fullAddress,
         'Zipcode': zipcode,
         'City': city,
-        'Country': countryName, // you can also store countryCode in another field
+        'Country': countryName,
         'Payout Info': payoutInfo,
-        // Optional extra fields for proof of consent:
         'T&C Version': 'v1.0',
         'Agreement Text': 'Agreed via I Agree button',
       });
 
       const sellerId = created.get('Seller ID');
 
-      // DM their seller ID
+      // DM Seller ID
       try {
         const dm = await interaction.user.createDM();
         await dm.send([
@@ -419,7 +484,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.error('Error sending DM with new Seller ID:', dmErr);
       }
 
-      // Call Make webhook to generate + attach PDF (if configured)
+      // Trigger Make PDF flow, if configured
       if (MAKE_PDF_WEBHOOK_URL) {
         try {
           await fetch(MAKE_PDF_WEBHOOK_URL, {
@@ -438,7 +503,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
               zipcode,
               city,
               countryName,
-              countryCode,
               payoutInfo,
               tcVersion: 'v1.0',
               agreedVia: 'button',
@@ -455,7 +519,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ephemeral: true,
       });
     } catch (err) {
-      console.error('Error handling seller registration modal:', err);
+      console.error('Error handling seller registration (Step 2):', err);
       await interaction.reply({
         content: '⚠️ Something went wrong while creating your seller profile. Please try again later.',
         ephemeral: true,
