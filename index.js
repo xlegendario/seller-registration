@@ -325,42 +325,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (byId.length > 0) {
         record = byId[0];
-      } else {
-        // 2) Build possible name candidates for the "Discord" field
-        const nameCandidates = new Set();
-        if (username) nameCandidates.add(username);
-        if (discordTag) nameCandidates.add(discordTag);
+            } else {
+              // 2) Build possible name candidates for the "Discord" field
+              const nameCandidates = new Set();
 
-        // Try to get display name from your main server (if configured)
-        if (REGISTRATION_GUILD_ID) {
-          try {
-            const guild = await client.guilds.fetch(REGISTRATION_GUILD_ID);
-            const member = await guild.members.fetch(discordId);
-            if (member && member.displayName) {
-              nameCandidates.add(member.displayName);
+              if (username) nameCandidates.add(username);
+              if (discordTag) nameCandidates.add(discordTag);
+
+              // If this interaction happens inside a server,
+              // also use that member's nickname/display name
+              if (interaction.member) {
+                const nick = interaction.member.nickname;
+                const displayName = interaction.member.displayName;
+
+                if (nick) nameCandidates.add(nick);
+                if (displayName && displayName !== nick) {
+                  nameCandidates.add(displayName);
+                }
+              } else if (REGISTRATION_GUILD_ID) {
+                // Fallback for DM usage: try to fetch displayName from main guild
+                try {
+                  const guild = await client.guilds.fetch(REGISTRATION_GUILD_ID);
+                  const member = await guild.members.fetch(discordId);
+                  if (member && member.displayName) {
+                    nameCandidates.add(member.displayName);
+                  }
+                } catch (err) {
+                  // ignore if not found / no access
+                }
+              }
+
+              const conditions = [...nameCandidates]
+                .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
+                .join(', ');
+
+              if (conditions) {
+                const byName = await sellersTable
+                  .select({
+                    maxRecords: 1,
+                    filterByFormula: `OR(${conditions})`,
+                  })
+                  .firstPage();
+
+                if (byName.length > 0) {
+                  record = byName[0];
+                }
+              }
             }
-          } catch (err) {
-            // ignore if not found / no access
-          }
-        }
-
-        const conditions = [...nameCandidates]
-          .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
-          .join(', ');
-
-        if (conditions) {
-          const byName = await sellersTable
-            .select({
-              maxRecords: 1,
-              filterByFormula: `OR(${conditions})`,
-            })
-            .firstPage();
-
-          if (byName.length > 0) {
-            record = byName[0];
-          }
-        }
-      }
 
       if (record) {
         const sellerId = record.get('Seller ID');
@@ -370,7 +381,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           content: [
             '✅ I found a seller profile linked to your Discord.',
             '',
-            `Your **Seller ID** is: \`${sellerId}\`.`,
+            ` Your **Seller ID** is: \`${sellerId}\`.`,
             email ? `\nThis profile is registered on: \`${email}\`` : '',
           ].join(''),
           ephemeral,
