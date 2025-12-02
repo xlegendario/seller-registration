@@ -177,7 +177,7 @@ function buildDMRegistrationEmbed(member) {
         '',
         'No results?', 
         '',
-        'Don't worry, just follow the steps below:',
+        "Don't worry, just follow the steps below:",
         '',
         'To start:',
         '1. Click **SIGN UP** below',
