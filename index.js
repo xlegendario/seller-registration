@@ -26,7 +26,8 @@ const {
   AIRTABLE_BASE_ID,
   AIRTABLE_SELLERS_TABLE = 'Sellers Database',
   MAKE_PDF_WEBHOOK_URL,
-  TNC_URL = 'https://kickzcaviar.nl/terms', // set your real T&C URL
+  // 🔽 Updated to Bitly link
+  TNC_URL = 'https://bit.ly/kickzcaviar-terms',
   PORT = 10000,
   REGISTRATION_GUILD_ID, // optional: limit auto-DM to this guild only
 } = process.env;
@@ -109,9 +110,12 @@ const countryOptions = [
 
 /* ---------------- Helper: shared buttons ---------------- */
 
-// ⛔️ T&C link REMOVED here – only SIGN UP on the main embeds
 function buildRegistrationButtonsRow() {
   return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('📄 Terms & Conditions')
+      .setStyle(ButtonStyle.Link)
+      .setURL(TNC_URL),
     new ButtonBuilder()
       .setCustomId('seller_signup')
       .setLabel('SIGN UP')
@@ -134,10 +138,10 @@ function buildChannelRegistrationEmbed() {
         '2. Review the Terms & Conditions',
         '3. Confirm your agreement and fill in your details',
         '',
-        'After completing the form you’ll receive your **Seller ID**. A lot of opportunities are waiting for you on the other side. :smirk:',
+        'After completing the form you’ll receive your **Seller ID** via DM and a signed agreement is stored on file.',
       ].join('\n'),
     )
-    .setColor(0xFFD300);
+    .setColor(0x00ae86);
 
   const row = buildRegistrationButtonsRow();
   return { embed, row };
@@ -150,16 +154,14 @@ function buildDMRegistrationEmbed(member) {
     .setTitle('👋 Welcome to Payout by Kickz Caviar')
     .setDescription(
       [
-        `Hey **${member.user.username}**!`,
+        `Hey **${member.user.username}**, welcome to **${member.guild.name}**!`,
         '',
-        `We're excited to have you here!`,
-        '',
-        'Our server is full of potential, with a lot of daily WTB\'s. To get started right away and make your first deals, you have to register as a seller by completing a quick one-time Seller Registration.',
+        'To get paid out for any deals and to be officially registered as a seller, we need you to complete a quick one-time seller registration.',
         '',
         '🧾 What you’ll get:',
         '- A unique **Seller ID**',
         '- Your details stored securely for payouts',
-        '- Access to exclusive buying and selling opportunities within the Kickz Caviar network',
+        '- A signed digital agreement (PDF) confirming you agreed to our T&C',
         '',
         'To start:',
         '1. Click **SIGN UP** below',
@@ -167,7 +169,7 @@ function buildDMRegistrationEmbed(member) {
         '3. Fill in your details in the forms that pop up',
       ].join('\n'),
     )
-    .setColor(0xFFD300);
+    .setColor(0x00ae86);
 
   const row = buildRegistrationButtonsRow();
   return { embed, row };
@@ -249,7 +251,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         })),
       );
 
-    // T&C link ONLY appears here, after they clicked SIGN UP
     const row1 = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel('📄 Open Terms & Conditions')
@@ -273,8 +274,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply({
       content: [
         'Please follow these steps:',
-        '1. Open and review our **Terms & Conditions** using the button below.',
-        '2. Select your **country** from the dropdown.',
+        '1. Open and review our **Terms & Conditions**.',
+        '2. Select your **country** from the dropdown below.',
         '3. Click **I Agree & Continue** to start the registration form.',
       ].join('\n'),
       components: [row1, row2, row3],
