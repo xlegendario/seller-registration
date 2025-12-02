@@ -28,6 +28,7 @@ const {
   MAKE_PDF_WEBHOOK_URL,
   TNC_URL = 'https://kickzcaviar.nl/terms', // set your real T&C URL
   PORT = 10000,
+  REGISTRATION_GUILD_ID, // optional: limit auto-DM to this guild only
 } = process.env;
 
 /* ---------------- EXPRESS (Render healthcheck) ---------------- */
@@ -61,7 +62,10 @@ if (!DISCORD_TOKEN) {
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers, // needed for GuildMemberAdd (auto-DM)
+  ],
   partials: [Partials.Channel],
 });
 
@@ -103,6 +107,73 @@ const countryOptions = [
   'Switzerland',
 ];
 
+/* ---------------- Helper: shared buttons ---------------- */
+
+function buildRegistrationButtonsRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('📄 Terms & Conditions')
+      .setStyle(ButtonStyle.Link)
+      .setURL(TNC_URL),
+    new ButtonBuilder()
+      .setCustomId('seller_signup')
+      .setLabel('SIGN UP')
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+/* ---------------- Helper: channel embed (seller-registration channel) ---------------- */
+
+function buildChannelRegistrationEmbed() {
+  const embed = new EmbedBuilder()
+    .setTitle('🖊️ Seller Registration')
+    .setDescription(
+      [
+        'Welcome to the **Payout by Kickz Caviar** seller onboarding.',
+        '',
+        'Use this when you’re ready to register as a seller:',
+        '',
+        '1. Click **SIGN UP**',
+        '2. Review the Terms & Conditions',
+        '3. Confirm your agreement and fill in your details',
+        '',
+        'After completing the form you’ll receive your **Seller ID** via DM and a signed agreement is stored on file.',
+      ].join('\n'),
+    )
+    .setColor(0x00ae86);
+
+  const row = buildRegistrationButtonsRow();
+  return { embed, row };
+}
+
+/* ---------------- Helper: DM embed (on member join) ---------------- */
+
+function buildDMRegistrationEmbed(member) {
+  const embed = new EmbedBuilder()
+    .setTitle('👋 Welcome to Payout by Kickz Caviar')
+    .setDescription(
+      [
+        `Hey **${member.user.username}**, welcome to **${member.guild.name}**!`,
+        '',
+        'To get paid out for any deals and to be officially registered as a seller, we need you to complete a quick one-time seller registration.',
+        '',
+        '🧾 What you’ll get:',
+        '- A unique **Seller ID**',
+        '- Your details stored securely for payouts',
+        '- A signed digital agreement (PDF) confirming you agreed to our T&C',
+        '',
+        'To start:',
+        '1. Click **SIGN UP** below',
+        '2. Review the Terms & Conditions',
+        '3. Fill in your details in the forms that pop up',
+      ].join('\n'),
+    )
+    .setColor(0x00ae86);
+
+  const row = buildRegistrationButtonsRow();
+  return { embed, row };
+}
+
 /* ---------------- Ready event: register slash cmd ---------------- */
 
 client.once(Events.ClientReady, async (c) => {
@@ -125,34 +196,39 @@ client.once(Events.ClientReady, async (c) => {
   }
 });
 
+/* ---------------- Auto-DM new members with DM-specific embed ---------------- */
+
+client.on(Events.GuildMemberAdd, async (member) => {
+  try {
+    if (member.user.bot) return;
+
+    // Optional: only auto-DM for a specific guild
+    if (REGISTRATION_GUILD_ID && member.guild.id !== REGISTRATION_GUILD_ID) return;
+
+    const { embed, row } = buildDMRegistrationEmbed(member);
+
+    await member.send({
+      embeds: [embed],
+      components: [row],
+    });
+
+    console.log(`✉️ Sent seller registration DM to ${member.user.tag}`);
+  } catch (err) {
+    // Commonly fails if user has DMs disabled
+    console.warn(`⚠️ Could not DM new member ${member.user.tag}:`, err.message);
+  }
+});
+
 /* ---------------- Interaction handling ---------------- */
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  /* ----- Slash command: post main embed ----- */
+  const inGuild = !!interaction.guildId;
+  const ephemeral = inGuild; // ephemeral in servers, normal messages in DM
+
+  /* ----- Slash command: post main embed in a channel ----- */
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'setup-seller-registration') {
-      const embed = new EmbedBuilder()
-        .setTitle('🖊️ Seller Registration')
-        .setDescription([
-          'Welcome to the **Kickz Caviar** seller onboarding.',
-          '',
-          'To sign up as a seller:',
-          '1. Click **SIGN UP**',
-          '2. Review the Terms & Conditions',
-          '3. Confirm your agreement and fill in your details',
-        ].join('\n'))
-        .setColor(0x00ae86);
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setLabel('📄 Terms & Conditions')
-          .setStyle(ButtonStyle.Link)
-          .setURL(TNC_URL),
-        new ButtonBuilder()
-          .setCustomId('seller_signup')
-          .setLabel('SIGN UP')
-          .setStyle(ButtonStyle.Primary),
-      );
+      const { embed, row } = buildChannelRegistrationEmbed();
 
       await interaction.reply({
         embeds: [embed],
@@ -202,7 +278,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         '3. Click **I Agree & Continue** to start the registration form.',
       ].join('\n'),
       components: [row1, row2, row3],
-      ephemeral: true,
+      ephemeral,
     });
 
     return;
@@ -214,8 +290,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!countryOptions.includes(selectedName)) {
       await interaction.reply({
-        content: '⚠️ Unknown country selection. Please try again.',
-        ephemeral: true,
+        content:
+          '⚠️ Unknown country selection. Please start the registration again by clicking **SIGN UP**.',
+        ephemeral,
       });
       return;
     }
@@ -245,8 +322,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const selection = userCountrySelection.get(interaction.user.id);
     if (!selection) {
       await interaction.reply({
-        content: '⚠️ Please select your country from the dropdown first.',
-        ephemeral: true,
+        content:
+          '⚠️ Please select your country from the dropdown first, or start the registration again by clicking **SIGN UP**.',
+        ephemeral,
       });
       return;
     }
@@ -297,7 +375,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content:
           '⚠️ Could not find your selected country. Please start the registration again by clicking **SIGN UP**.',
-        ephemeral: true,
+        ephemeral,
       });
       return;
     }
@@ -331,7 +409,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Now click **Continue to Address (Step 2/2)** to fill in your address and payout info.',
       ].join('\n'),
       components: [row],
-      ephemeral: true,
+      ephemeral,
     });
 
     return;
@@ -344,7 +422,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content:
           '⚠️ I could not find your contact info. Please start the registration again by clicking **SIGN UP**.',
-        ephemeral: true,
+        ephemeral,
       });
       return;
     }
@@ -402,7 +480,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content:
           '⚠️ I could not find your contact info. Please start the registration again by clicking **SIGN UP**.',
-        ephemeral: true,
+        ephemeral,
       });
       return;
     }
@@ -448,7 +526,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           content: 'ℹ️ You already have a seller profile. I’ve sent your Seller ID in DM (if possible).',
-          ephemeral: true,
+          ephemeral,
         });
 
         return;
@@ -476,13 +554,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // DM Seller ID
       try {
         const dm = await interaction.user.createDM();
-        await dm.send([
-          '✅ Thanks for signing up as a seller with **Kickz Caviar**!',
-          '',
-          `Your **Seller ID** is: \`${sellerId}\``,
-          '',
-          'Please keep this ID safe – you may need it for support or verification.',
-        ].join('\n'));
+        await dm.send(
+          [
+            '✅ Thanks for signing up as a seller with **Kickz Caviar**!',
+            '',
+            `Your **Seller ID** is: \`${sellerId}\``,
+            '',
+            'Please keep this ID safe – you may need it for support or verification.',
+          ].join('\n'),
+        );
       } catch (dmErr) {
         console.error('Error sending DM with new Seller ID:', dmErr);
       }
@@ -519,13 +599,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.reply({
         content: '✅ Your seller profile has been created. I’ve sent your Seller ID in DM.',
-        ephemeral: true,
+        ephemeral,
       });
     } catch (err) {
       console.error('Error handling seller registration (Step 2):', err);
       await interaction.reply({
         content: '⚠️ Something went wrong while creating your seller profile. Please try again later.',
-        ephemeral: true,
+        ephemeral,
       });
     }
   }
