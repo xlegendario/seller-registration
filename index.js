@@ -107,15 +107,23 @@ const countryOptions = [
   'Switzerland',
 ];
 
+/* ---------------- Helper: formula escaping ---------------- */
+
+const escapeForFormula = (str) => String(str).replace(/'/g, "\\'");
+
 /* ---------------- Helper: shared buttons ---------------- */
 
-// ⛔️ T&C link REMOVED here – only SIGN UP on the main embeds
+// Only SIGN UP + Seller ID Check on main embeds (T&C appears after SIGN UP)
 function buildRegistrationButtonsRow() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('seller_signup')
       .setLabel('SIGN UP')
       .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('seller_id_check')
+      .setLabel('Seller ID Check')
+      .setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -135,6 +143,8 @@ function buildChannelRegistrationEmbed() {
         '3. Confirm your agreement and fill in your details',
         '',
         'After completing the form you’ll receive your **Seller ID**. A lot of opportunities are waiting for you on the other side. :smirk:',
+        'Not sure if you already have a Seller ID, or you just forgot what it was?',
+        'Please click the **Seller ID Check** button below. If your profile is linked to this Discord, it will show you your Seller ID.',
       ].join('\n'),
     )
     .setColor(0xFFD300);
@@ -160,6 +170,14 @@ function buildDMRegistrationEmbed(member) {
         '- A unique **Seller ID**',
         '- Your details stored securely for payouts',
         '- Access to exclusive buying and selling opportunities within the Kickz Caviar network',
+        '',
+        '👉 Already sold with us before?',
+        'Then you probably already have a Seller Profile. If you don’t remember your Seller ID, please click the **Seller ID Check** button below. If your profile is linked to this Discord, it will show you your Seller ID.',
+        'You can also check your email, because we have also send your Seller ID there after the deal.',
+        '',
+        'No results?', 
+        '',
+        'Don't worry, just follow the steps below:',
         '',
         'To start:',
         '1. Click **SIGN UP** below',
@@ -280,6 +298,99 @@ client.on(Events.InteractionCreate, async (interaction) => {
       components: [row1, row2, row3],
       ephemeral,
     });
+
+    return;
+  }
+
+  /* ----- Seller ID Check button ----- */
+  if (interaction.isButton() && interaction.customId === 'seller_id_check') {
+    const discordId = interaction.user.id;
+    const discordTag = interaction.user.tag;
+    const username = interaction.user.username;
+
+    try {
+      let record = null;
+
+      // 1) Try exact Discord ID match
+      const byId = await sellersTable
+        .select({
+          maxRecords: 1,
+          filterByFormula: `{Discord ID} = '${escapeForFormula(discordId)}'`,
+        })
+        .firstPage();
+
+      if (byId.length > 0) {
+        record = byId[0];
+      } else {
+        // 2) Build possible name candidates for the "Discord" field
+        const nameCandidates = new Set();
+        if (username) nameCandidates.add(username);
+        if (discordTag) nameCandidates.add(discordTag);
+
+        // Try to get display name from your main server (if configured)
+        if (REGISTRATION_GUILD_ID) {
+          try {
+            const guild = await client.guilds.fetch(REGISTRATION_GUILD_ID);
+            const member = await guild.members.fetch(discordId);
+            if (member && member.displayName) {
+              nameCandidates.add(member.displayName);
+            }
+          } catch (err) {
+            // ignore if not found / no access
+          }
+        }
+
+        const conditions = [...nameCandidates]
+          .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
+          .join(', ');
+
+        if (conditions) {
+          const byName = await sellersTable
+            .select({
+              maxRecords: 1,
+              filterByFormula: `OR(${conditions})`,
+            })
+            .firstPage();
+
+          if (byName.length > 0) {
+            record = byName[0];
+          }
+        }
+      }
+
+      if (record) {
+        const sellerId = record.get('Seller ID');
+        const email = record.get('Email');
+
+        await interaction.reply({
+          content: [
+            '✅ I found a seller profile linked to your Discord.',
+            '',
+            `Your **Seller ID** is: \`${sellerId}\`.`,
+            email ? `\nThis profile is registered on: \`${email}\`` : '',
+          ].join(''),
+          ephemeral,
+        });
+      } else {
+        await interaction.reply({
+          content: [
+            '❌ I could not find a seller profile linked to this Discord.',
+            '',
+            'If you have sold with us before via a form or external server, please check your email – your Seller ID was sent to you after your first completed deal.',
+            '',
+            'If you have never registered before, please click **SIGN UP** to create your seller profile.',
+          ].join('\n'),
+          ephemeral,
+        });
+      }
+    } catch (err) {
+      console.error('Error during Seller ID Check:', err);
+      await interaction.reply({
+        content:
+          '⚠️ Something went wrong while checking your Seller ID. Please try again later or contact support.',
+        ephemeral,
+      });
+    }
 
     return;
   }
@@ -507,7 +618,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const existing = await sellersTable
         .select({
           maxRecords: 1,
-          filterByFormula: `{Discord ID} = '${discordId}'`,
+          filterByFormula: `{Discord ID} = '${escapeForFormula(discordId)}'`,
         })
         .firstPage();
 
