@@ -31,8 +31,8 @@ const {
   REGISTRATION_GUILD_ID, // optional: limit auto-DM to this guild only
 
   // NEW: optional envs for the DM helper
-  ORDER_FORM_URL,       // e.g. https://your-order-processing-form-url
-  DISCORD_INVITE_URL,   // e.g. https://discord.gg/yourinvite
+  ORDER_FORM_URL = 'https://airtable.com/appHoMBqKDPnVfWJY/pagBT948BlVapOzc5/form', // e.g. https://your-order-processing-form-url
+  DISCORD_INVITE_URL = 'https://discord.gg/aE4j7T8a', // e.g. https://discord.gg/yourinvite
 } = process.env;
 
 /* ---------------- EXPRESS (Render healthcheck) ---------------- */
@@ -204,8 +204,7 @@ async function findSellerRecordForInteraction(interaction) {
   if (username) nameCandidates.add(username);
   if (discordTag) nameCandidates.add(discordTag);
 
-  // If this interaction happens inside a server,
-  // also use that member's nickname/display name
+  // If this interaction happens inside a server, also use that member's nickname/display name
   if (interaction.member) {
     const nick = interaction.member.nickname;
     const displayName = interaction.member.displayName;
@@ -231,9 +230,14 @@ async function findSellerRecordForInteraction(interaction) {
     return null;
   }
 
+  // Use CONTAINS/SEARCH instead of exact equality
+  // This way "Legendario" will match "Legendario#4880"
   const conditions = [...nameCandidates]
-    .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
-    .join(', '); // OR(cond1,cond2,...)
+    .map(
+      (n) =>
+        `SEARCH('${escapeForFormula(n)}', {Discord} & '') > 0`
+    )
+    .join(', ');
 
   const byName = await sellersTable
     .select({
@@ -248,6 +252,7 @@ async function findSellerRecordForInteraction(interaction) {
 
   return null;
 }
+
 
 /* ---------------- Helper: shared buttons ---------------- */
 
