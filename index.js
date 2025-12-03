@@ -29,6 +29,10 @@ const {
   TNC_URL = 'https://bit.ly/kickzcaviar-terms', // set your real T&C URL
   PORT = 10000,
   REGISTRATION_GUILD_ID, // optional: limit auto-DM to this guild only
+
+  // NEW: optional envs for the DM helper
+  ORDER_FORM_URL,       // e.g. https://your-order-processing-form-url
+  DISCORD_INVITE_URL,   // e.g. https://discord.gg/yourinvite
 } = process.env;
 
 /* ---------------- EXPRESS (Render healthcheck) ---------------- */
@@ -43,6 +47,70 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🌐 Express server listening on port ${PORT}`);
+});
+
+/* -------- NEW: HTTP endpoint to DM existing sellers from Make ------- */
+// POST /notify-existing-seller
+// Body: { discordId: string, sellerId: string, orderId?: string, email?: string }
+app.post('/notify-existing-seller', async (req, res) => {
+  const { discordId, sellerId, orderId, email } = req.body || {};
+
+  if (!discordId || !sellerId) {
+    return res.status(400).json({
+      success: false,
+      error: 'discordId and sellerId are required in the request body.',
+    });
+  }
+
+  try {
+    const user = await client.users.fetch(discordId);
+
+    const orderLine = orderId
+      ? `\nThis message is about order **${orderId}**.`
+      : '';
+
+    const emailLine = email
+      ? `\nThis seller profile is registered on: \`${email}\`.`
+      : '';
+
+    const orderFormLine = ORDER_FORM_URL
+      ? `\n1️⃣ Using the **Order Processing form**: ${ORDER_FORM_URL}\n   – You only fill in order details + your Seller ID.`
+      : `\n1️⃣ Using the **Order Processing form** (ask staff for the link)\n   – You only fill in order details + your Seller ID.`;
+
+    const inviteLine = DISCORD_INVITE_URL
+      ? `\n2️⃣ Making your deals directly inside the **Kickz Caviar server**:\n   ${DISCORD_INVITE_URL}`
+      : `\n2️⃣ Making your deals directly inside the **Kickz Caviar server** (if you’re not in yet, ask us for the invite link).`;
+
+    const message = [
+      `Hey ${user.username}!`,
+      '',
+      'We noticed you just filled in the full **Sales Agreement** form, but you already have an active Seller Profile with **Payout by Kickz Caviar**.',
+      '',
+      `Your **Seller ID** is: \`${sellerId}\`.`,
+      emailLine,
+      orderLine,
+      '',
+      'Next time, you can save a lot of time by:',
+      orderFormLine,
+      inviteLine,
+      '',
+      'If you think this is a mistake or something doesn’t look right, just reply here or contact support.',
+      '',
+      'Thanks for selling with us 🙌',
+    ].join('\n');
+
+    const dm = await user.createDM();
+    await dm.send(message);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error sending existing-seller DM:', err);
+    return res.status(500).json({
+      success: false,
+      error:
+        'Failed to send DM. The user may have DMs disabled or the bot has no access.',
+    });
+  }
 });
 
 /* ---------------- Airtable setup ---------------- */
