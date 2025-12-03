@@ -43,7 +43,7 @@ app.post('/notify-existing-seller', async (req, res) => {
 
     if (DISCORD_INVITE_URL) {
       lines.push(
-        'Join the **Payout by Kickz Caviar Server below to take benefit is **instant deals and many more sales opportunities**!',
+        'Join the **Payout by Kickz Caviar** server below to take benefit is **instant deals and many more sales opportunities**!',
         '',
         `👉 [Click here](${DISCORD_INVITE_URL})`
       );
