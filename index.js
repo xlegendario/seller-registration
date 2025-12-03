@@ -111,6 +111,76 @@ const countryOptions = [
 
 const escapeForFormula = (str) => String(str).replace(/'/g, "\\'");
 
+/* ---------------- Helper: find seller record for a user ---------------- */
+
+async function findSellerRecordForInteraction(interaction) {
+  const discordId = interaction.user.id;
+  const discordTag = interaction.user.tag;
+  const username = interaction.user.username;
+
+  // 1) Try exact Discord ID match first (most reliable)
+  const byId = await sellersTable
+    .select({
+      maxRecords: 1,
+      filterByFormula: `{Discord ID} = '${escapeForFormula(discordId)}'`,
+    })
+    .firstPage();
+
+  if (byId.length > 0) {
+    return byId[0];
+  }
+
+  // 2) Build possible name candidates for the "Discord" text field
+  const nameCandidates = new Set();
+
+  if (username) nameCandidates.add(username);
+  if (discordTag) nameCandidates.add(discordTag);
+
+  // If this interaction happens inside a server,
+  // also use that member's nickname/display name
+  if (interaction.member) {
+    const nick = interaction.member.nickname;
+    const displayName = interaction.member.displayName;
+
+    if (nick) nameCandidates.add(nick);
+    if (displayName && displayName !== nick) {
+      nameCandidates.add(displayName);
+    }
+  } else if (REGISTRATION_GUILD_ID) {
+    // Fallback for DM usage: try to fetch displayName from main guild
+    try {
+      const guild = await client.guilds.fetch(REGISTRATION_GUILD_ID);
+      const member = await guild.members.fetch(discordId);
+      if (member && member.displayName) {
+        nameCandidates.add(member.displayName);
+      }
+    } catch (err) {
+      // ignore if not found / no access
+    }
+  }
+
+  if (nameCandidates.size === 0) {
+    return null;
+  }
+
+  const conditions = [...nameCandidates]
+    .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
+    .join(', '); // OR(cond1,cond2,...)
+
+  const byName = await sellersTable
+    .select({
+      maxRecords: 1,
+      filterByFormula: `OR(${conditions})`,
+    })
+    .firstPage();
+
+  if (byName.length > 0) {
+    return byName[0];
+  }
+
+  return null;
+}
+
 /* ---------------- Helper: shared buttons ---------------- */
 
 // Only SIGN UP + Seller ID Check on main embeds (T&C appears after SIGN UP)
@@ -179,7 +249,7 @@ function buildDMRegistrationEmbed(member) {
         'Then you probably already have a Seller Profile. If you don’t remember your Seller ID, please click the **Seller ID Check** button below. If your profile is linked to this Discord, it will show you your Seller ID.',
         'You can also check your email, because we have also send your Seller ID there after the deal.',
         '',
-        'No results?', 
+        'No results?',
         '',
         "Don't worry, just follow the steps below:",
         '',
@@ -259,8 +329,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
-  /* ----- SIGN UP button → T&C + country + I Agree step ----- */
+  /* ----- SIGN UP button → first check for existing seller, then T&C flow ----- */
   if (interaction.isButton() && interaction.customId === 'seller_signup') {
+    try {
+      const existingRecord = await findSellerRecordForInteraction(interaction);
+
+      if (existingRecord) {
+        const sellerId = existingRecord.get('Seller ID');
+        const email = existingRecord.get('Email');
+
+        await interaction.reply({
+          content: [
+            'ℹ️ You already have a seller profile with **Kickz Caviar**.',
+            '',
+            `Your **Seller ID** is: \`${sellerId}\`.`,
+            email ? `\nThis profile is registered on: \`${email}\`` : '',
+            '',
+            'You do not need to register again. If something looks wrong, please contact support.',
+          ].join(''),
+          ephemeral,
+        });
+        return; // stop flow here
+      }
+    } catch (err) {
+      console.error('Error checking existing seller on SIGN UP:', err);
+      // If check fails, we still let them continue, worst case we catch duplicate later
+    }
+
     const countrySelect = new StringSelectMenuBuilder()
       .setCustomId('seller_country_select')
       .setPlaceholder('Select your country')
@@ -308,70 +403,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   /* ----- Seller ID Check button ----- */
   if (interaction.isButton() && interaction.customId === 'seller_id_check') {
-    const discordId = interaction.user.id;
-    const discordTag = interaction.user.tag;
-    const username = interaction.user.username;
-
     try {
-      let record = null;
-
-      // 1) Try exact Discord ID match
-      const byId = await sellersTable
-        .select({
-          maxRecords: 1,
-          filterByFormula: `{Discord ID} = '${escapeForFormula(discordId)}'`,
-        })
-        .firstPage();
-
-      if (byId.length > 0) {
-        record = byId[0];
-            } else {
-              // 2) Build possible name candidates for the "Discord" field
-              const nameCandidates = new Set();
-
-              if (username) nameCandidates.add(username);
-              if (discordTag) nameCandidates.add(discordTag);
-
-              // If this interaction happens inside a server,
-              // also use that member's nickname/display name
-              if (interaction.member) {
-                const nick = interaction.member.nickname;
-                const displayName = interaction.member.displayName;
-
-                if (nick) nameCandidates.add(nick);
-                if (displayName && displayName !== nick) {
-                  nameCandidates.add(displayName);
-                }
-              } else if (REGISTRATION_GUILD_ID) {
-                // Fallback for DM usage: try to fetch displayName from main guild
-                try {
-                  const guild = await client.guilds.fetch(REGISTRATION_GUILD_ID);
-                  const member = await guild.members.fetch(discordId);
-                  if (member && member.displayName) {
-                    nameCandidates.add(member.displayName);
-                  }
-                } catch (err) {
-                  // ignore if not found / no access
-                }
-              }
-
-              const conditions = [...nameCandidates]
-                .map((n) => `{Discord} = '${escapeForFormula(n)}'`)
-                .join(', ');
-
-              if (conditions) {
-                const byName = await sellersTable
-                  .select({
-                    maxRecords: 1,
-                    filterByFormula: `OR(${conditions})`,
-                  })
-                  .firstPage();
-
-                if (byName.length > 0) {
-                  record = byName[0];
-                }
-              }
-            }
+      const record = await findSellerRecordForInteraction(interaction);
 
       if (record) {
         const sellerId = record.get('Seller ID');
@@ -381,7 +414,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           content: [
             '✅ I found a seller profile linked to your Discord.',
             '',
-            ` Your **Seller ID** is: \`${sellerId}\`.`,
+            `Your **Seller ID** is: \`${sellerId}\`.`,
             email ? `\nThis profile is registered on: \`${email}\`` : '',
           ].join(''),
           ephemeral,
@@ -629,7 +662,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const discordTag = interaction.user.tag;
 
     try {
-      // Check if seller already exists
+      // Check if seller already exists (Discord ID only – safety net)
       const existing = await sellersTable
         .select({
           maxRecords: 1,
