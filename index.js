@@ -188,21 +188,23 @@ app.post('/notify-deal-confirmation', async (req, res) => {
     // Thank-you + intro
     lines.push(
       'Thank you for choosing to deal with **Payout by Kickz Caviar**!',
-      "We’re happy to have completed this order with you.",
+      'We’re happy to have completed this order with you.',
       ''
     );
 
-    // Deal summary
-    lines.push('**Deal Summary**', '');
-    if (orderId) lines.push(`• **Order ID:** ${orderId}`);
-    if (sku) lines.push(`• **SKU:** ${sku}`);
-    if (size) lines.push(`• **Size:** ${size}`);
-    if (payout) lines.push(`• **Payout:** €${payout}`);
-    if (orderDate) lines.push(`• **Date:** ${orderDate}`);
-    lines.push('');
+    // Build deal summary lines
+    const summaryLines = [];
+    if (orderId) summaryLines.push(`• **Order ID:** ${orderId}`);
+    if (sku) summaryLines.push(`• **SKU:** ${sku}`);
+    if (size) summaryLines.push(`• **Size:** ${size}`);
+    if (payout) summaryLines.push(`• **Payout:** €${payout}`);
+    if (orderDate) summaryLines.push(`• **Date:** ${orderDate}`);
 
-    // Seller ID
-    lines.push(`Your **Seller ID** is: \`${sellerId}\`.`, '');
+    if (summaryLines.length > 0) {
+      lines.push('**Deal Summary**', '');
+      lines.push(...summaryLines);
+      lines.push('');
+    }
 
     // Speed + server invite
     lines.push('Next time, you can make deals much faster.', '');
@@ -211,7 +213,7 @@ app.post('/notify-deal-confirmation', async (req, res) => {
       lines.push(
         'Join the **Payout by Kickz Caviar** server below to benefit from **instant deals and many more sales opportunities**!',
         '',
-        `👉 ${DISCORD_INVITE_URL}`,
+        `👉 [click here](${DISCORD_INVITE_URL})`,
         ''
       );
     } else {
@@ -220,6 +222,9 @@ app.post('/notify-deal-confirmation', async (req, res) => {
         ''
       );
     }
+
+    // Seller ID
+    lines.push(`Your **Seller ID** is: \`${sellerId}\`.`, '');
 
     // Seller ID help
     lines.push(
@@ -243,6 +248,7 @@ app.post('/notify-deal-confirmation', async (req, res) => {
     });
   }
 });
+
 
 
 app.listen(PORT, () => {
