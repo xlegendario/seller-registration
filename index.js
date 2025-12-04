@@ -145,6 +145,106 @@ app.post('/notify-existing-seller', async (req, res) => {
   }
 });
 
+/* -------- HTTP endpoint to DM deal confirmation from Make ------- */
+// POST /notify-deal-confirmation
+// Body: {
+//   discordId: string,
+//   sellerId: string,
+//   fullName?: string,
+//   orderId?: string,
+//   sku?: string,
+//   size?: string,
+//   payout?: string | number,
+//   orderDate?: string
+// }
+app.post('/notify-deal-confirmation', async (req, res) => {
+  const {
+    discordId,
+    sellerId,
+    fullName,
+    orderId,
+    sku,
+    size,
+    payout,
+    orderDate,
+  } = req.body || {};
+
+  if (!discordId || !sellerId) {
+    return res.status(400).json({
+      success: false,
+      error: 'discordId and sellerId are required in the request body.',
+    });
+  }
+
+  try {
+    const user = await client.users.fetch(discordId);
+    const nameForGreeting = fullName || user.username;
+
+    const lines = [];
+
+    // Greeting
+    lines.push(`Hey **${nameForGreeting}**!`, '');
+
+    // Thank-you + intro
+    lines.push(
+      'Thank you for choosing to deal with **Payout by Kickz Caviar**!',
+      "We’re happy to have completed this order with you.",
+      ''
+    );
+
+    // Deal summary
+    lines.push('**Deal Summary**', '');
+    if (orderId) lines.push(`• **Order ID:** ${orderId}`);
+    if (sku) lines.push(`• **SKU:** ${sku}`);
+    if (size) lines.push(`• **Size:** ${size}`);
+    if (payout) lines.push(`• **Payout:** €${payout}`);
+    if (orderDate) lines.push(`• **Date:** ${orderDate}`);
+    lines.push('');
+
+    // Seller ID
+    lines.push(`Your **Seller ID** is: \`${sellerId}\`.`, '');
+
+    // Speed + server invite
+    lines.push('Next time, you can make deals much faster.', '');
+
+    if (DISCORD_INVITE_URL) {
+      lines.push(
+        'Join the **Payout by Kickz Caviar** server below to benefit from **instant deals and many more sales opportunities**!',
+        '',
+        `👉 ${DISCORD_INVITE_URL}`,
+        ''
+      );
+    } else {
+      lines.push(
+        'If you want to catch more **quick deals and buying opportunities**, the best way is to make your deals directly inside the **Kickz Caviar server**.',
+        ''
+      );
+    }
+
+    // Seller ID help
+    lines.push(
+      'If you ever lose your Seller ID, just use **Seller ID Check** inside the server to retrieve it again.',
+      '',
+      'Thanks for selling with us 🙌'
+    );
+
+    const message = lines.join('\n');
+
+    const dm = await user.createDM();
+    await dm.send(message);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error sending deal-confirmation DM:', err);
+    return res.status(500).json({
+      success: false,
+      error:
+        'Failed to send DM. The user may have DMs disabled or the bot has no access.',
+    });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`🌐 Express server listening on port ${PORT}`);
 });
