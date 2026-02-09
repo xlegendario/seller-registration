@@ -393,7 +393,7 @@ function buildChannelRegistrationEmbed() {
     .setTitle('🖊️ Seller Registration')
     .setDescription(
       [
-        'Welcome to the **Payout by Kickz Caviar** seller onboarding.',
+        'Welcome to the **Kickz Caviar** seller onboarding.',
         '',
         'Use this when you’re ready to register as a seller:',
         '',
@@ -418,34 +418,30 @@ function buildChannelRegistrationEmbed() {
 
 function buildDMRegistrationEmbed(member) {
   const embed = new EmbedBuilder()
-    .setTitle('👋 Welcome to Payout by Kickz Caviar')
+    .setTitle('👋 Welcome Kickz Caviar')
     .setDescription(
       [
         `Hey **${member.user.username}**!`,
         '',
-        `We're excited to have you here!`,
+        'Glad to have you here 🤝',
         '',
-        'Our server is full of potential, with a lot of daily WTB\'s. To get started right away and make your first deals, you have to register as a seller by completing a quick one-time Seller Registration.',
+        'This server is where verified sellers get access to:',
+        '• ⚡ Daily WTB’s & Quick Deals',
+        '• 💸 Fast payouts',
+        '• 🏆 Monthly Leaderboards for Top Sellers & Inviter',
         '',
-        '🧾 What you’ll get:',
+        '🚨 **Important before making any deal**',
+        'To claim or process **any deal**, you need a **Seller ID**.',
+        'This helps us verify sellers and keep payouts smooth.',
         '',
-        '- A unique **Seller ID**',
-        '- Your details stored securely for payouts',
-        '- Access to exclusive selling opportunities within the Kickz Caviar network',
+        '👉 **New here?**',
+        'Click **SIGN UP** below to register once and get your Seller ID.',
         '',
-        '👉 Already sold with us before?',
+        '👉 **Sold with us before?**',
+        'Use **SELLER ID CHECK** below to retrieve your existing Seller ID.',
+        'You can also find it in your email from previous deals.',
         '',
-        'Then you probably already have a Seller Profile. If you don’t remember your Seller ID, please click the **Seller ID Check** button below. If your profile is linked to this Discord, it will show you your Seller ID.',
-        'You can also check your email, because we have also send your Seller ID there after the deal.',
-        '',
-        'No results?',
-        '',
-        "Don't worry, just follow the steps below:",
-        '',
-        'To start:',
-        '1. Click **SIGN UP** below',
-        '2. Review the Terms & Conditions',
-        '3. Fill in your details in the forms that pop up',
+        'Once that’s done, you’re ready to start dealing 🚀',
       ].join('\n'),
     )
     .setColor(0xFFD300);
