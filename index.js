@@ -33,6 +33,7 @@ const {
   // Optional: for DM helper (we now only really use DISCORD_INVITE_URL)
   ORDER_FORM_URL = 'https://airtable.com/appHoMBqKDPnVfWJY/pagBT948BlVapOzc5/form',
   DISCORD_INVITE_URL = 'https://discord.gg/aE4j7T8a',
+  PORTAL_URL = 'https://kickz-caviar-portal.onrender.com',
 } = process.env;
 
 /* ---------------- Airtable setup ---------------- */
@@ -296,6 +297,46 @@ const countryOptions = [
 /* ---------------- Helper: formula escaping ---------------- */
 
 const escapeForFormula = (str) => String(str).replace(/'/g, "\\'");
+
+/* ---------------- Helper: one email and one Discord per Seller ID ---------------- */
+
+// Only Discord ID was checked before, so someone who first registered through
+// the old form or the portal got a second Seller ID here, and the portal then
+// refused to link their Discord to the first one. Email is compared the way
+// the portal compares it: trimmed and lowercased.
+const normalizeEmail = (value) => String(value ?? '').trim().toLowerCase();
+
+async function findExistingSeller({ discordId, email }) {
+  const clauses = [];
+  if (discordId) clauses.push(`TRIM({Discord ID} & '') = '${escapeForFormula(String(discordId).trim())}'`);
+  if (normalizeEmail(email)) clauses.push(`LOWER(TRIM({Email} & '')) = '${escapeForFormula(normalizeEmail(email))}'`);
+  if (!clauses.length) return null;
+
+  const records = await sellersTable
+    .select({ maxRecords: 20, filterByFormula: clauses.length === 1 ? clauses[0] : `OR(${clauses.join(', ')})` })
+    .firstPage();
+
+  // Discord first: that is the profile the bots already know this user by.
+  const byDiscord = discordId && records.find((r) => String(r.get('Discord ID') || '').trim() === String(discordId).trim());
+  if (byDiscord) return { matchedOn: 'discord', record: byDiscord };
+
+  const byEmail = records.find((r) => normalizeEmail(r.get('Email')) === normalizeEmail(email));
+  return byEmail ? { matchedOn: 'email', record: byEmail } : null;
+}
+
+function existingSellerMessage({ matchedOn, record }) {
+  const sellerId = record.get('Seller ID');
+
+  if (matchedOn === 'discord') {
+    return `ℹ️ You already have a seller profile with Kickz Caviar. Your **Seller ID** is \`${sellerId}\`.`;
+  }
+
+  return [
+    `ℹ️ This email already has a seller profile with Kickz Caviar (Seller ID \`${sellerId}\`), so we will not create a second one.`,
+    '',
+    `Log in at ${PORTAL_URL} with this email. No password yet, or forgot it? Use **First time login or forgot password** there, then link your Discord from the portal.`,
+  ].join('\n');
+}
 
 /* ---------------- Helper: find seller record for a user ---------------- */
 
@@ -729,7 +770,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const fullName = interaction.fields.getTextInputValue('full_name');
     const companyName = interaction.fields.getTextInputValue('company_name') || '';
     const vatId = interaction.fields.getTextInputValue('vat_id') || '';
-    const email = interaction.fields.getTextInputValue('email');
+    const email = normalizeEmail(interaction.fields.getTextInputValue('email'));
+
+    // Stop here rather than after step 2, so nobody fills in an address for
+    // a profile that will not be made.
+    try {
+      const existing = await findExistingSeller({ discordId: interaction.user.id, email });
+      if (existing) {
+        userCountrySelection.delete(interaction.user.id);
+        await interaction.reply({ content: existingSellerMessage(existing), ephemeral });
+        return;
+      }
+    } catch (err) {
+      // Not fatal here: the same check runs again before anything is created.
+      console.error('Existing seller check failed (Step 1):', err);
+    }
 
     pendingSellerContact.set(interaction.user.id, {
       countryName,
@@ -847,29 +902,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const discordTag = interaction.user.tag;
 
     try {
-      // Check if seller already exists (Discord ID only – safety net)
-      const existing = await sellersTable
-        .select({
-          maxRecords: 1,
-          filterByFormula: `{Discord ID} = '${escapeForFormula(discordId)}'`,
-        })
-        .firstPage();
+      // Same email or same Discord ID: send them to that profile, never make a
+      // second one. A failed lookup throws and creates nothing.
+      const existing = await findExistingSeller({ discordId, email });
 
-      if (existing.length > 0) {
-        const record = existing[0];
-        const existingSellerId = record.get('Seller ID');
-
+      if (existing) {
         try {
           const dm = await interaction.user.createDM();
-          await dm.send(
-            `👋 You already have a seller profile with Kickz Caviar.\n\nYour **Seller ID** is: \`${existingSellerId}\`.`,
-          );
+          await dm.send(existingSellerMessage(existing));
         } catch (dmErr) {
           console.error('Error sending DM with existing Seller ID:', dmErr);
         }
 
         await interaction.reply({
-          content: 'ℹ️ You already have a seller profile. I’ve sent your Seller ID in DM (if possible).',
+          content: existingSellerMessage(existing),
           ephemeral,
         });
 
